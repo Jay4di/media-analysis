@@ -14,12 +14,19 @@ if uploaded_file:
     sentiment_data = data.groupby('Sentiment').agg({'Estimated Reach': 'sum', 'Article Link': 'count'}).reset_index()
     tier_data = data.groupby('Media Tier').agg({'Estimated Reach': 'sum', 'Article Link': 'count'}).reset_index()
 
+
     # Media outlet analysis
     media_outlet_data = data.groupby('Media Outlet').agg(
         {'Estimated Reach': 'sum', 'Article Link': 'count'}).reset_index()
-    media_outlet_data['Sentiment Distribution'] = data.groupby('Media Outlet')['Sentiment'].apply(
+
+    # Tambahkan distribusi sentimen per media outlet
+    sentiment_distribution = data.groupby('Media Outlet')['Sentiment'].apply(
         lambda x: x.value_counts(normalize=True).to_dict()
-    )
+    ).reset_index(name='Sentiment Distribution')
+
+    # Gabungkan data distribusi sentimen dengan media_outlet_data
+    media_outlet_data = media_outlet_data.merge(sentiment_distribution, on='Media Outlet', how='left')
+
     top_media_outlet = media_outlet_data.sort_values(by='Article Link', ascending=False).head(10)
 
     # Sidebar menu
