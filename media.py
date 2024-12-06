@@ -1,89 +1,164 @@
-import pandas as pd
 import streamlit as st
-import matplotlib.pyplot as plt
-
+from streamlit_option_menu import option_menu
+import pandas as pd
 import plotly.express as px
 
-# Fungsi untuk membuat pie chart interaktif
-def create_pie_chart_plotly(data, column_name):
-    # Hitung jumlah untuk setiap kategori dalam kolom tertentu
-    data_count = data[column_name].value_counts().reset_index()
-    data_count.columns = [column_name, 'Count']
-    
-    # Plot pie chart interaktif
-    fig = px.pie(data_count, names=column_name, values='Count', title=f"{column_name} Distribution")
-    st.plotly_chart(fig)
+# Inisialisasi Session State untuk menyimpan data yang diunggah
+if "uploaded_file" not in st.session_state:
+    st.session_state["uploaded_file"] = None
+if "data" not in st.session_state:
+    st.session_state["data"] = None
 
-# Load data
-uploaded_file = st.file_uploader("Upload your CSV file", type=["csv"])
-if uploaded_file:
-    data = pd.read_csv(uploaded_file)
-    data['Date'] = pd.to_datetime(data['Date'])
-    data['Week'] = data['Date'].dt.to_period('W').astype(str)
+with st.sidebar:
+    menu = option_menu(
+        menu_title = "Main Menu",
+        options=["Business Case", "Upload File", "Weekly Analysis", "Sentiment Analysis", "Tier Analysis", "Top Media Outlet", "About Me"],
+        icons=["house", "file-bar-graph", "filter-circle", "diagram-3","diagram-3", "database", "person"],
+        menu_icon="cast",  # optional
+        default_index=0,  # optional
+        styles={
 
-    # Total reach and coverage per week, sentiment, and tier
-    # Total reach per minggu
-    total_reach_week = data.groupby('Week')['Estimated Reach'].sum().reset_index()
-    total_reach_week.rename(columns={'Estimated Reach': 'Total Reach'}, inplace=True)
+                "icon": {"color": "orange"},
+                "nav-link": {
+                    "--hover-color": "#eee",
+                },
+                "nav-link-selected": {"background-color": "green"},
+            },
+        )
 
-    # Total coverage (jumlah media outlet unik per minggu)
-    total_coverage_week = data.groupby('Week')['Media Outlet'].count().reset_index()
-    total_coverage_week.rename(columns={'Media Outlet': 'Total Coverage'}, inplace=True)
 
-    # Gabungkan hasil
-    weekly_data = pd.merge(total_reach_week, total_coverage_week, on='Week')
-    sentiment_data = data.groupby('Sentiment').agg({'Estimated Reach': 'sum', 'Article Link': 'count'}).reset_index()
-    tier_data = data.groupby('Media Tier').agg({'Estimated Reach': 'sum', 'Article Link': 'count'}).reset_index()
+# Upload File Tab
+if menu == "Upload File":
+    st.title("Upload Your Data File")
+    uploaded_file = st.file_uploader("Upload your CSV file", type="csv")
+    if uploaded_file:
+        st.session_state["uploaded_file"] = uploaded_file
+        df = pd.read_csv(uploaded_file)
+        st.session_state["data"] = df
+        st.success("File uploaded successfully!")
+        st.write("Preview of your data:")
+        st.dataframe(df.head())
 
+# Gunakan data dari session state
+if st.session_state["data"] is not None:
+    df = st.session_state["data"]
+    df['Date'] = pd.to_datetime(df['Date'])
+    df['Week'] = df['Date'].dt.isocalendar().week
+
+    # Aggregations
+    weekly_data = df.groupby(['Week']).agg(
+        total_coverage=('Media Outlet', 'count'),
+        total_reach=('Estimated Reach', 'sum')
+    ).reset_index()
+
+    sentiment_data = df.groupby(['Sentiment']).agg(
+        total_coverage=('Media Outlet', 'count'),
+        total_reach=('Estimated Reach', 'sum')
+    ).reset_index()
+
+    tier_data = df.groupby(['Media Tier']).agg(
+        total_coverage=('Media Outlet', 'count'),
+        total_reach=('Estimated Reach', 'sum')
+    ).reset_index()
 
     # Media outlet analysis
-    media_outlet_data = data.groupby('Media Outlet').agg(
-        {'Estimated Reach': 'sum', 'Article Link': 'count'}).reset_index()
+    df['Media Outlet'] = df['Media Outlet'].str.lower()
+    outlet_data = df.groupby(['Media Outlet', 'Sentiment']).agg(
+        total_coverage=('Media Outlet', 'count'),
+        total_reach=('Estimated Reach', 'sum')
+    ).reset_index()
 
-    # Tambahkan distribusi sentimen per media outlet
-    sentiment_distribution = data.groupby('Media Outlet')['Sentiment'].apply(
-        lambda x: x.value_counts(normalize=True).to_dict()
-    ).reset_index(name='Sentiment Distribution')
+    # Aggregate for all outlets
+    outlet_totals = df.groupby('Media Outlet').agg(
+        total_coverage=('Media Outlet', 'count'),
+        total_reach=('Estimated Reach', 'sum')
+    ).reset_index()
 
-    # Gabungkan data distribusi sentimen dengan media_outlet_data
-    media_outlet_data = media_outlet_data.merge(sentiment_distribution, on='Media Outlet', how='left')
+    # Calculate positive rate
+    positive_counts = df[df['Sentiment'] == 'Positive'].groupby('Media Outlet').size().reset_index(name='positive_count')
+    outlet_totals = outlet_totals.merge(positive_counts, on='Media Outlet', how='left').fillna(0)
+    outlet_totals['positive_rate'] = (outlet_totals['positive_count'] / outlet_totals['total_coverage']) * 100
 
-    top_media_outlet = media_outlet_data.sort_values(by='Article Link', ascending=False).head(10)
+    # Sort by total coverage
+    outlet_totals = outlet_totals.sort_values('total_coverage', ascending=False)
 
-    # Sidebar menu
-    menu = st.sidebar.radio("Menu", ["Business Case", "Weekly Analysis", "Sentiment Analysis", 
-                                     "Tier Analysis", "Top Media Outlet", "About Me"])
+    # Business Case
+    if menu == "Business Case":
+        st.title("Business Case")
+        st.write("""
+            **Media Coverage Analysis Platform**
+            
+            Dalam era digital, analisis media memainkan peran penting untuk memahami efektivitas kampanye komunikasi 
+            dan dampaknya terhadap audiens. Platform ini dirancang untuk membantu Anda dalam:
+            
+            1. **Mengukur Total Reach dan Coverage**: Menganalisis seberapa luas jangkauan pesan Anda di berbagai media.
+            2. **Mengevaluasi Sentimen Media**: Memahami apakah sentimen liputan cenderung positif, negatif, atau netral.
+            3. **Menganalisis Media Tier**: Mengetahui performa media berdasarkan tingkatannya.
+            4. **Identifikasi Media Teratas**: Mengenali media mana yang memberikan kontribusi terbesar terhadap liputan dan jangkauan Anda.
 
-    if menu == "Weekly Analysis":
+            Dengan menggunakan data berbasis bukti, Anda dapat merancang strategi komunikasi yang lebih efektif dan 
+            memastikan pesan Anda mencapai audiens yang tepat dengan dampak yang maksimal.
+        """)
+
+    # Weekly Analysis
+    elif menu == "Weekly Analysis":
         st.title("Weekly Analysis")
-        metric = st.selectbox("Choose Metric", ["Total Coverage", "Total Reach"])
-        if metric == "Total Coverage":
-            st.line_chart(weekly_data.set_index('Week')['total_coverage_week'])
-        else:
-            st.line_chart(weekly_data.set_index('Week')['total_reach_week'])
+        metric = st.selectbox("Select Metric", ["Total Coverage", "Total Reach"])
+        y_axis = 'total_coverage' if metric == "Total Coverage" else 'total_reach'
+        fig = px.line(weekly_data, x='Week', y=y_axis, title=f"{metric} Per Week")
+        st.plotly_chart(fig)
 
+    # Sentiment Analysis
     elif menu == "Sentiment Analysis":
         st.title("Sentiment Analysis")
-        metric = st.selectbox("Choose Metric", ["Total Coverage", "Total Reach"])
-        if metric == "Total Coverage":
-            # Misalnya menggunakan plotly untuk Sentiment Analysis
-            create_pie_chart_plotly(sentiment_data, 'Article Link')
-        else:
-            create_pie_chart_plotly(sentiment_data, 'Estimated Reach')
+        metric = st.selectbox("Select Metric", ["Total Coverage", "Total Reach"])
+        y_axis = 'total_coverage' if metric == "Total Coverage" else 'total_reach'
+        fig = px.pie(sentiment_data, names='Sentiment', values=y_axis, title=f"{metric} by Sentiment")
+        st.plotly_chart(fig)
 
+    # Tier Analysis
     elif menu == "Tier Analysis":
         st.title("Tier Analysis")
-        metric = st.selectbox("Choose Metric", ["Total Coverage", "Total Reach"])
-        if metric == "Total Coverage":
-            create_pie_chart_plotly(tier_data, 'Article Link')
-        else:
-            create_pie_chart_plotly(tier_data, 'Estimated Reach')
+        metric = st.selectbox("Select Metric", ["Total Coverage", "Total Reach"])
+        y_axis = 'total_coverage' if metric == "Total Coverage" else 'total_reach'
+        fig = px.pie(tier_data, names='Media Tier', values=y_axis, title=f"{metric} by Media Tier")
+        st.plotly_chart(fig)
 
+    # Top Media Outlet
     elif menu == "Top Media Outlet":
         st.title("Top Media Outlet")
-        st.write("Table of Top Media Outlets")
-        st.table(top_media_outlet)
+        st.write("### Media Outlet Rankings")
+        st.write("Below is the table of all media outlets sorted by total coverage:")
+        st.dataframe(outlet_totals[['Media Outlet', 'total_coverage', 'total_reach', 'positive_rate']])
 
+    # About Me
     elif menu == "About Me":
-        st.title("About Me")
-        st.write("This dashboard was created by [Your Name].")
+        # Judul halaman
+        st.header("About Me")
+
+        st.write("- **Nama Lengkap:** Jayadi Butar Butar")
+        st.write("- **Alamat:** Jakarta, Indonesia")
+        st.write("- **Email:** jayadidetormentor@gmail.com")
+
+        # Summary
+        st.subheader("Summary")
+        st.markdown(""" <div style="text-align: justify">    
+        I'm a motivated Data Professional with a strong background in scientific research, Data Science, and Machine Learning. 
+        Proficient in Python, Rstudio, SQL, and Spreadsheets, I excel in qualitative and quantitative research. 
+        My dynamic academic journey honed my strategic thinking, leadership, and problem-solving skills.
+        I derive valuable insights from complex datasets and excel in presenting them for data-driven decision-making. 
+        Passionate about Statistics, Data Science, and AI, I aim to make a significant impact in the world of data.
+        Eager to learn and grow, I stay updated with the latest industry advancements through active training and self-directed learning. 
+        My goal is to leverage my skills in data analysis and machine learning to solve complex problems and achieve meaningful outcomes.
+        If you're looking for a dedicated and analytical team player thriving in a data-driven environment, let's connect for outstanding results.
+        """, unsafe_allow_html=True)
+
+
+        # Tautan ke Akun Sosial Media
+        st.subheader("Projects Portofolio")
+        st.write("- [LinkedIn](https://www.linkedin.com/in/jayadib/)")
+        st.write("- [rPubs](https://rpubs.com/JayadiB/)")
+        st.write("- [GitHub](https://github.com/Jay4di)")
+else:
+    if menu != "Upload File":
+        st.warning("Please upload a file in the 'Upload File' tab to continue.")
